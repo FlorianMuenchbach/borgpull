@@ -1,0 +1,26 @@
+# BORG PULL -- Client Config
+#
+# This file configures the backup client, i.e. the one machine that is being
+# backed up.
+
+export BORG_BACKUP_USER="borg"
+export BORG_BACKUP_GROUP="borg"
+
+
+# Remote (server side!) repository as SSH path in the format
+# `ssh://<HOST>[:PORT]/<FULL_PATH_TO_REPO>`
+# The HOST part may be an entry from the SSH config or an IP address
+export BORG_REPO="ssh://"
+
+# BORG PASSPHRASE
+# Keep it surrounded in single high ticks to avoid evaluation/expansion
+export BORG_PASSPHRASE=''
+
+# Path to socket (on client side)
+export BACKUP_SOCKET="/run/borg/netcup.socket"
+
+# BORG Remote Shell
+# Usually, there's no need to change this.
+export BORG_RSH="sh -c \"exec socat STDIO UNIX-CONNECT:${BACKUP_SOCKET}\""
+
+# vim: set filetype=bash

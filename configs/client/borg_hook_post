@@ -1,0 +1,6 @@
+#!/bin/bash
+
+rm -v ${BACKUP_SOCKET}
+
+exit
+

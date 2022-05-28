@@ -1,0 +1,7 @@
+--verbose
+--filter AME
+--list
+--stats
+--show-rc
+--compression auto,lzma,5
+--exclude-caches

@@ -1,0 +1,33 @@
+# BORG PULL -- Backup Server Config
+#
+# This file configures the backup server, i.e. the one
+# that "pulls" the backup.
+# "local" and "remote" are as seen from the backup
+# server's perspective
+
+
+# Local borg user.
+LOCAL_USER="borg"
+
+# Remote borg user.
+REMOTE_USER="borg"
+
+# This can either be a fully qualified domain, an IP address or an SSH config
+# entry
+REMOTE_HOST=""
+
+# Name of the repository to backup to.
+REPO_NAME=""
+
+# Destination of the Borg Repository
+REPO_DIR=""
+
+# Runtime configuration
+# Usually, no change needed here.
+RUN_DIR="/run/borg"
+SOCKET="${REPO_NAME}.socket"
+SOCKET_PATH="${RUN_DIR}/${SOCKET}"
+REMOTE_SOCKET_PATH="${SOCKET_PATH}"
+
+
+# vim: set filetype=bash

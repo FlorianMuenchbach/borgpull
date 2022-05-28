@@ -1,0 +1,256 @@
+#!/bin/bash
+
+CONFIG_BASE_DIR="${BORGPULL_CONFIG_DIR:-/etc/borgpull}"
+ARCHIVE_NAME='{hostname}-{now}'
+PRUNE_ARCHIVE_NAME_PATTERN='{hostname}-'
+
+SOCKET="${2}"
+
+log() {
+    echo "${@}"
+}
+
+error() {
+    log "ERROR  : ${@}" >&2
+}
+
+inf() {
+    log "INFO   : ${@}"
+}
+
+warn() {
+    log "WARNING: ${@}"
+}
+
+export -f log
+export -f error
+export -f inf
+export -f warn
+
+usage() {
+cat << EOF
+Usage:
+  ${SCRIPT_NAME} [OPTIONS] MODE
+
+MODE:
+  SETUP     : Perform necessary configuration steps, create runtime directories,
+              etc. This should be done before running the BACKUP command mode.
+  BACKUP    : Run the backup procedure.
+
+Options:
+  -c|--configs DIR  : Use configuration files from DIR
+                      Can be set via env variable
+                      BORGPULL_CONFIG_DIR, too
+  -s|--socket PATH  : Socket path
+                      If not given, auto-detection will
+                      be attmpted
+  -h|--help         : Displays this help message.
+EOF
+}
+
+
+longopts="help socket: configs:"
+shortopts="hs:c:"
+if ! getopt_args="$(getopt -n"${SCRIPT_NAME}" --longoptions="${longopts}" --options="${shortopts}" -- "${@}")"; then
+    usage && exit 1
+fi
+
+eval set -- "${getopt_args}"
+
+CONFIG="${BORGPULL_CONFIG:-"/etc/borgpull/server/borgpull.conf"}"
+
+while [[ $1 == -* ]]; do
+    case "$1" in
+        -c|--configs) CONFIG_BASE_DIR="${2}"; shift 2;;
+        -s|--socket) SOCKET="${2}"; shift 2;;
+        -h|--help) usage; exit 0;;
+        --) shift; break ;;
+        *) error "Invalid options: $1"; usage ; exit 1 ;;
+    esac
+done
+
+
+PATH_BORG_ENV="${CONFIG_BASE_DIR}/borg_env"
+PATH_BORG_PATHS="${CONFIG_BASE_DIR}/borg_paths"
+PATH_BORG_EXCLUDE="${CONFIG_BASE_DIR}/borg_excludes"
+PATH_BORG_PATTERNS="${CONFIG_BASE_DIR}/borg_patterns"
+PATH_BORG_CREATE_OPTIONS="${CONFIG_BASE_DIR}/borg_options_create"
+PATH_BORG_PRUNE_OPTIONS="${CONFIG_BASE_DIR}/borg_options_prune"
+PATH_BORG_HOOK_PRE="${CONFIG_BASE_DIR}/borg_hook_pre"
+PATH_BORG_HOOK_POST="${CONFIG_BASE_DIR}/borg_hook_post"
+
+PATHS=""
+EXTRA_OPTIONS_CREATE=""
+EXTRA_OPTIONS_PRUNE=""
+
+
+
+inf "Running as user ${USER} (${UID})"
+
+[ -f "${PATH_BORG_ENV}" ] \
+    && inf "Found environment file, loading it..." \
+    && { source "${PATH_BORG_ENV}" \
+        || { error "Failed to load environment file." && exit 1; }; } \
+    || inf "Did not find any environment file."
+
+[ -z "${BORG_REPO}" ] \
+    && error "BORG_REPO not set. This variable is required." \
+    && exit 1
+
+[ -f "${PATH_BORG_PATHS}" ] \
+    && PATHS="$(cat "${PATH_BORG_PATHS}" | tr '\n' ' ')" \
+    || { error "Missing or not readable paths file at ${PATH_BORG_PATHS}." && exit 1; }
+
+[ -f "${PATH_BORG_CREATE_OPTIONS}" ] \
+    && { EXTRA_OPTIONS_CREATE="$(cat "${PATH_BORG_CREATE_OPTIONS}" | tr '\n' ' ')" \
+        || { error "Not readable options file at ${PATH_BORG_CREATE_OPTIONS}." \
+            && exit 1; }; }
+
+[ -f "${PATH_BORG_PRUNE_OPTIONS}" ] \
+    && { EXTRA_OPTIONS_PRUNE="$(cat "${PATH_BORG_PRUNE_OPTIONS}" | tr '\n' ' ')" \
+        || { error "Not readable options file at ${PATH_BORG_PRUNE_OPTIONS}." \
+            && exit 1; }; }
+
+load_socket_path() {
+    if [[ -z "${BORG_RSH}" && -n "${SOCKET}" ]]; then
+        inf "Creating BORG_RSH command from specified socket path."
+        export BORG_RSH="'sh -c \"exec socat STDIO UNIX-CONNECT:${SOCKET}\"'"
+    elif [[ -n "${BORG_RSH}" && -n "${SOCKET}" ]]; then
+        error "BORG_RSH set, but got a socket file descriptor as well. Don't know what to do."
+        exit 1
+    elif [[ -n "${BORG_RSH}" && -z "${SOCKET}" ]]; then
+        inf "Using BORG_RSH."
+        # Get socket from BORG_RSH. This might fail if the socket path contains whitespaces..
+        socket="$(echo "${BORG_RSH}" | sed -e 's/.*UNIX-CONNECT:\([^ "]*\).*/\1/')"
+
+        export SOCKET="${socket}"
+        export BORG_RSH
+        
+        inf "Got socket path '${SOCKET}' from BORG_RSH command."
+    else
+        error "Missing socket path."
+        exit 1
+    fi
+}
+
+pre_backup_checks() {
+    if [ -S "${SOCKET}" ]; then
+        inf "Checked unix socket path '${SOCKET}', socket is usable."
+    elif [ ! -f "${SOCKEt}" ]; then
+        error "Socket '${SOCKET}' does not exist!"
+        exit 1
+    else
+        error "Socket path '${SOCKET}' exists, but is not a socket."
+        exit 1
+    fi
+}
+
+
+exec_hook() {
+    local hook="${1}"
+    local name="${2}"
+
+    [ -x "${hook}" ] \
+        && { inf "Executing ${name} hook." \
+            && "${hook}" \
+            && inf "Finished executing ${name} hook." \
+            || { rv=$? \
+                && error "Failed executing the ${name} hook, stopping. Status: $rv" \
+                && return $rv; }; \
+            } \
+        || { \
+            [ ! -f "${hook}" ] \
+            && inf "No ${name} hook configured." \
+            || { error "${name} hook (${hook}) configured but not executable." && exit 1; }; }
+}
+
+
+exec_backup() {
+    inf "Execute backup..."
+    borg create \
+         ${EXTRA_OPTIONS_CREATE} \
+         --exclude-from "${PATH_BORG_EXCLUDE}" \
+         --patterns-from "${PATH_BORG_PATTERNS}" \
+         ::"${ARCHIVE_NAME}" \
+         ${PATHS}
+    borg_backup_exit=$?
+
+    if [ ${borg_backup_exit} -eq 0 ]; then
+        inf "Backup done, no errors."
+    elif [ ${borg_backup_exit} -eq 1 ]; then
+        warn "Backup done, but finished with warnings."
+    else
+        error "Failure during backup, status: ${borg_backup_exit}."
+        exit ${borg_backup_exit}
+    fi
+
+
+    # Use the `prune` subcommand to maintain 7 daily, 4 weekly and 6 monthly
+    # archives of THIS machine. The '{hostname}-' prefix is very important to
+    # limit prune's operation to this machine's archives and not apply to
+    # other machines' archives also:
+
+    inf "Pruning old backups..."
+    borg prune                      \
+        ${EXTRA_OPTIONS_PRUNE} \
+        --prefix "${PRUNE_ARCHIVE_NAME_PATTERN}" \
+        --keep-daily    7       \
+        --keep-weekly   4       \
+        --keep-monthly  6
+
+    prune_exit=$?
+
+    if [ ${prune_exit} -eq 0 ]; then
+        inf "Pruning backups done, no errors."
+    elif [ ${prune_exit} -eq 1 ]; then
+        warn "Pruning backup done, but finished with warnings."
+    else
+        error "Failure during pruning backups, status: ${prune_exit}. Continuing, since backup was done."
+    fi
+}
+
+create_run_dir() {
+    local run_dir
+    run_dir="$(dirname "${SOCKET}")" || { error "Failed determining the run directory." && exit 1; }
+    mkdir -p "${run_dir}" \
+        && chmod 0700 "${run_dir}" \
+        && chown ${BORG_BACKUP_USER}:${BORG_BACKUP_GROUP} "${run_dir}" \
+        && inf "Created and configured required directories." \
+        || { error "Failet creating or configuring required directories." && exit 1; }
+}
+
+
+mode="${1^^}"
+if [[ ! ( "$mode" == "BACKUP" || "$mode" == "SETUP" ) ]]; then
+    error "Unknown mode, try BACKUP or SETUP."
+    exit 1
+fi
+
+rv=1
+
+inf "Starting with '${mode}' mode...."
+
+if [ "$mode" == "BACKUP" ]; then
+    load_socket_path
+    pre_backup_checks
+
+    # NOTE: The backup is only executed, if the pre hook succeeds. The post hook is triggered anyways.
+    rv_backup_pre=0
+    exec_hook "${PATH_BORG_HOOK_PRE}" "Pre" \
+        && exec_backup
+    rv_backup_pre=$?
+
+    exec_hook "${PATH_BORG_HOOK_POST}" "Post"
+    rv_post=$?
+
+    rv=$((rv_backup_pre > rv_post ? rv_backup_pre : rv_post ))
+elif [ "$mode" == "SETUP" ]; then
+    load_socket_path \
+        && create_run_dir
+    rv=$?
+else
+    error "Unknown mode, try BACKUP or SETUP."
+    exit 1
+fi
+
+exit $rv

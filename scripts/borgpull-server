@@ -1,0 +1,124 @@
+#!/bin/bash
+
+
+[[ "${0}" =~ bash$ && -n ${BASH_SOURCE[0]} ]] \
+     && __file="${BASH_SOURCE[0]}" \
+     || __file="${0}"
+
+SCRIPT_DIR="$( cd "$( dirname "${__file}" )" && pwd )"
+SCRIPT_NAME=$(basename "${__file}")
+unset __file
+
+log() {
+    echo "${@}"
+}
+
+error() {
+    log "ERROR  : ${@}" >&2
+}
+
+inf() {
+    log "INFO   : ${@}"
+}
+
+warn() {
+    log "WARNING: ${@}"
+}
+
+usage() {
+cat << EOF
+Usage:
+  ${SCRIPT_NAME} [OPTIONS] MODE
+
+MODE:
+  SERVE     : Only run borg serve and keep the connection open.
+              Useful for running first backup or restoring files from backup
+              on the client.
+  BACKUP    : Establish the reverse SSH connection and trigger the backup
+              procedure on the client.
+
+Options:
+  -c|--config FILE  : Use configuration from FILE
+                      Can be set via env variable
+                      BORGPULL_CONFIG, too
+  -h|--help         : Displays this help message.
+EOF
+}
+
+
+longopts="help config:"
+shortopts="hc:"
+if ! getopt_args="$(getopt -n"${SCRIPT_NAME}" --longoptions="${longopts}" --options="${shortopts}" -- "${@}")"; then
+    usage && exit 1
+fi
+
+eval set -- "${getopt_args}"
+
+CONFIG="${BORGPULL_CONFIG:-"/etc/borgpull/server/borgpull.conf"}"
+
+while [[ $1 == -* ]]; do
+    case "$1" in
+        -c|--config) CONFIG="${2}"; shift 2;;
+        -h|--help) usage; exit 0;;
+        --) shift; break ;;
+        *) error "Invalid options: $1"; usage ; exit 1 ;;
+    esac
+done
+
+[ -f "${CONFIG}" ] \
+    && source "${CONFIG}" \
+    && inf "Using config file: ${CONFIG}" \
+    || { error "Failed to open config file: ${CONFIG}"; exit 1; }
+
+
+mode="${1^^}"
+if [[ ! ( "$mode" == "BACKUP" || "$mode" == "SERVE" ) ]]; then
+    error "Unknown mode, try BACKUP or SERVE."
+    exit 1
+else
+    inf "Mode: ${mode}"
+fi
+
+[ -f "${SOCKET_PATH}" ] \
+    && { error "Socket ${SOCKET_PATH} still exists, aborting." && exit 1; } \
+    || inf "Passed initial checks, continuing..."
+
+
+mkdir -p -m 0700 "${RUN_DIR}" \
+    && chown ${LOCAL_USER} "${RUN_DIR}" \
+    && mkdir -p -m 0700 "${REPO_DIR}" \
+    && chown ${LOCAL_USER} "${REPO_DIR}" \
+    && inf "Required directories created / configured." \
+    || { error "Failed creating / setting permissions for required dirs." && exit 1; }
+
+
+{ (sudo -i -u ${LOCAL_USER} \
+    socat \
+    UNIX-LISTEN:"${SOCKET_PATH}",fork \
+    EXEC:"borg serve --verbose --append-only --restrict-to-path ${REPO_DIR}" ) & } \
+    && SOCAT_PID=$! \
+    && inf "Started socat with borg serve, PID=${SOCAT_PID}." \
+    || { error "Failed starting socat with borg serve, terminating." && exit 2; }
+
+
+if [ "$mode" == "BACKUP" ]; then
+    inf "Trigger remote backup..."
+    rv=0
+    sudo -u ${LOCAL_USER} \
+        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" ${REMOTE_USER}@${REMOTE_HOST} \
+        && inf "Remote backup complete." \
+        || { rv=$? && error "Remote backup failed with status ${rv}!."; }
+    # the socket will be cleaned up on success! kill ${SOCAT_PID} not needed!
+    exit $rv
+elif [ "$mode" == "SERVE" ]; then
+    inf "Starting SSH connection in 'SERVE' mode, hit Ctrl+C to cancel."
+    sudo -u ${LOCAL_USER} \
+        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" -N ${REMOTE_USER}@${REMOTE_HOST}
+    warn "Remember to delete the remote socket file at '${REMOTE_SOCKET_PATH}'"
+else
+    error "Unknown mode, try BACKUP or SERVE."
+    exit 1
+fi
+
+
+exit

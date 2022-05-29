@@ -1,10 +1,11 @@
-pull-based borg setup
+pull-based Borg setup
 =====================
 
 # The Issue
 
-Machines that are not able to (NAT?) or shall not be able to (permissions?
-policies?) reach a backup server but still have to be backed up using borg.
+Machines that are not able to (NAT?) or must not be able to (permissions?
+policies?) reach a backup server but still have to be backed up using
+[Borg](https://www.borgbackup.org/).
 Borg allows to push data to a remote backup server, but the backup can not be
 initiated by the backup server itself.
 
@@ -13,17 +14,23 @@ initiated by the backup server itself.
 Instead of pushing the data from the client (machine to be backed up) to the
 backup server, the data is "pulled".
 This is done by initiating a reverse-SSH UDS connection from backup server
-to the client and triggering the client to start a borg backup (push mode!).
+to the client and triggering the client to start a Borg backup (push mode!).
 Therefore, it's "pull", not pull.
 
-The solution is based on [this part of the borg
-documentation](https://github.com/borgbackup/borg/blob/master/docs/deployment/pull-backup.rst#socat)
-and [this original issue](https://github.com/borgbackup/borg/issues/900).
+The solution is based on [this part of the Borg documentation][1] and [this
+original issue][2].
 
+By adding configuration files, sanity checks and by hiding all technical details
+behind a single command for running a backup, the initial idea becomes easily
+reusable across multiple backup clients.
+
+
+[1]: https://github.com/borgbackup/borg/blob/master/docs/deployment/pull-backup.rst#socat
+[2]: https://github.com/borgbackup/borg/issues/900
 
 ## How it works (roughly...)
 
-1. Backup server starts borg in "serve" mode
+1. Backup server starts Borg in "serve" mode
 2. Backup server establishes a remote SSH connection to the client and binds
    a local UDS socket to one that appears on the remote client side
 3. The login via SSH automatically triggers the backup procedure on the client
@@ -32,7 +39,80 @@ and [this original issue](https://github.com/borgbackup/borg/issues/900).
    server using `borg create`
 5. Backups are being rotated an pruned using `borg prune`
 
+
+# Usage
+
+## Initiate a Backup from the Backup Server
+
+```
+% ./scripts/borgpull-server --config <CONFIG>  BACKUP
+```
+
+## Initialize the Borg Repository
+
+This needs to be done **before** the first backup!
+
+### On the *backup server*
+
+```
+./borgpull-server -c <CONFIG> SERVE
+```
+This starts socat with `borg serve` and runs the ssh command *with* `-N`, so it
+does not acquire a tty and does not run the `ForceCommand` script:
+
+Keep running until done!
+
+### On the *backup client*
+
+As root (best in a dedicated "throw-away shell", enviornment...):
+```
+% source /etc/borgpull/borg_env
+% borg init --encryption=repokey-blake2
+% rm /run/borg/borgpull.socket
+```
+
+## Read / Restore from the backup
+
+### On the *backup server*
+
+Start socat with `borg serve`:
+```
+./borgpull-server -c <CONFIG> SERVE
+```
+
+### On the *backup client*
+
+As root (best in a dedicated "throw-away shell", enviornment...):
+```
+% source /etc/borgpull/borg_env
+```
+
+Now, all Borg commands will work on the client!
+For example, to list the available backups:
+```
+% borg list
+```
+
+## Manually trigger a backup from the client side
+
+### On the *backup server*
+
+Borg has to be running in "serve" mode:
+```
+./borgpull-server -c <CONFIG> SERVE
+```
+
+### On the *backup client*
+
+As root:
+```
+% ./borgpull-client -c /etc/borgpull SETUP
+% ./borgpull-client -c /etc/borgpull BACKUP
+```
+
 # Setup
+
+**Note:** Based on ArchLinux. Should not matter too much, tho.
 
 ## Prerequisites / Required packages
 
@@ -59,6 +139,78 @@ available:
 Note: If a host entry from the SSH config should be used, it has to be added
 tot the SSH config of the `borg` user at
 `/var/lib/borg_remote_pull/.ssh/config`.
+
+
+# Configuration
+
+For both, server and client, matching configuration is required.
+
+## Server Configuration
+
+The server side requires one configuration file per client.
+A sample configuration file can be found
+[here](configs/server/borgpull.conf.example).
+
+**Important:**
+The socket path (`REMOTE_SOCKET_PATH`) on the server side must match the
+`BACKUP_SOCKET` in the `borg_env` file on the client side.
+
+**Hint:**
+Choose different socket paths for different clients to avoid conflicts.
+
+## Client Configuration
+
+The configuration on the client side is split into a set of different files.
+
+* `borg_env`
+
+   Basic borgpull settings. Must be configured first.
+   The file contains some explanatory comments.
+
+   This file will be `source`d.
+
+   **Hint**: If needed, the file may contain further Borg variables or commands.
+* `borg_paths`
+
+  List of paths to be archived. Will be appended to `borg create` as `PATH...`
+  argument.
+
+  See: `borg create --help`
+* `borg_patterns`
+
+  Include pattern paths, passed to `--pattern-from` during `borg create`.
+
+  See: `borg create --help`
+
+
+* `borg_excludes`
+
+  Exclude paths, passed to `--exclude-from` during `borg create`.
+
+  See: `borg create --help`
+* `borg_hook_pre`
+
+   Script file to be executed before the backup is executed.
+   Can be used to execute backup preparation. This can be anything from stopping
+   running services and containers to running database dumps.
+
+   An exit status code other than 0 will skip the actual backup but still execute
+   the `borg_hook_post` hook.
+* `borg_hook_post`
+
+   Script file to be executed after the backup process has terminated
+  (regardless of its success).
+  Counterpart to `borg_hook_pre` that my be used to restart services, etc.
+* `borg_options_create`
+
+  List of additional options passed to `borg create`.
+
+  See: `borg create --help`
+* `borg_options_prune`
+
+  List of additional options passed to `borg prune`.
+
+  See: `borg prune --help`
 
 
 ## Steps on the Backup Client
@@ -155,126 +307,5 @@ tot the SSH config of the `borg` user at
   borgpull ALL   = (root) NOPASSWD: BORG_BACKUP
   ```
 
-
-# Client Configs
-
-* `borg_env`
-
-   Basic borgpull settings. Must be configured first.
-   The file contains some explanatory comments.
-* `borg_paths`
-
-  List of paths to be archived. Will be appended to `borg create` as `PATH...`
-  argument.
-
-  See: `borg create --help`
-* `borg_patterns`
-
-  Include pattern paths, passed to `--pattern-from` during `borg create`.
-
-  See: `borg create --help`
-
-
-* `borg_excludes`
-
-  Exclude paths, passed to `--exclude-from` during `borg create`.
-
-  See: `borg create --help`
-* `borg_hook_pre`
-
-   Script file to be executed before the backup is executed.
-   Can be used to execute backup preparation. This can be anything from stopping
-   running services and containers to running database dumps.
-
-   An exit status code other than 0 will skip the actual backup but still execute
-   the `borg_hook_post` hook.
-* `borg_hook_post`
-
-   Script file to be executed after the backup process has terminated
-  (regardless of its success).
-  Counterpart to `borg_hook_pre` that my be used to restart services, etc.
-* `borg_options_create`
-
-  List of additional options passed to `borg create`.
-
-  See: `borg create --help`
-* `borg_options_prune`
-
-  List of additional options passed to `borg prune`.
-
-  See: `borg prune --help`
-
-# Initialize the borg repo on the remote backup server side
-
-## On the *backup server*
-
-```
-./borgpull-server -c <CONFIG> SERVE
-```
-This starts socat with `borg serve` and runs the ssh command *with* `-N`, so it
-does not acquire a tty and does not run the `ForceCommand` script:
-
-Keep running until done!
-
-## On the *backup client*
-
-As root (best in a dedicated "throw-away shell"):
-```
-% source /etc/borgpull/borg_env
-% borg init --encryption=repokey-blake2
-% rm /run/borg/netcup.socket
-```
-
-# Read from the backup
-
-## On the *backup server*
-
-Start socat with `borg serve`:
-```
-./borgpull-server -c <CONFIG> SERVE
-```
-
-## On the *backup client*
-
-As root (best in a dedicated "throw-away shell"):
-```
-% source /etc/borgpull/borg_env
-# Example, now all borg commands work!
-% borg list
-```
-
-
-Once done, remember to remove the socket file.
-```
-% rm /run/borg/netcup.socket
-```
-
-# Manually trigger a backup from the client side
-
-## On the *backup server*
-
-Borg has to be running in "serve" mode:
-```
-./borgpull-server -c <CONFIG> SERVE
-```
-
-## On the *backup client*
-
-As root (best in a dedicated "throw-away shell"):
-```
-% ./borgpull-client -c /etc/borgpull SETUP
-% ./borgpull-client -c /etc/borgpull BACKUP
-```
-
-
-Once done, remember to remove the socket file.
-```
-% rm /run/borg/netcup.socket
-```
-
-
-# Start a Backup from the Backup Server
-
-```
-% ./scripts/borgpull-server --config <CONFIG>  BACKUP
-```
+**Before the first backup can be created, the [repository must be
+initialized](#initialize-the-borg-repository)**

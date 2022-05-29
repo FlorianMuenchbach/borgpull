@@ -216,7 +216,7 @@ create_run_dir() {
         && chmod 0700 "${run_dir}" \
         && chown ${BORG_BACKUP_USER}:${BORG_BACKUP_GROUP} "${run_dir}" \
         && inf "Created and configured required directories." \
-        || { error "Failet creating or configuring required directories." && exit 1; }
+        || { error "Failed to create or configure required directories." && exit 1; }
 }
 
 

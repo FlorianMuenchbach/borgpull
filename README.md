@@ -48,6 +48,12 @@ reusable across multiple backup clients.
 % ./scripts/borgpull-server --config <CONFIG>  BACKUP
 ```
 
+> :warning: **Always check your backups for completeness and consistency** :warning:
+>
+> Try restoring from the backup before the original data is actually lost.
+>
+> Don't blindly trust (backup) scripts shared by some guy on the internet…
+
 ## Initialize the Borg Repository
 
 This needs to be done **before** the first backup!

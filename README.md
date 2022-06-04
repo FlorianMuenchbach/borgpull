@@ -28,6 +28,14 @@ reusable across multiple backup clients.
 [1]: https://github.com/borgbackup/borg/blob/master/docs/deployment/pull-backup.rst#socat
 [2]: https://github.com/borgbackup/borg/issues/900
 
+## Features
+
+* Works for backup servers behind NAT
+* Does not require the client to log in to the backup server
+* Server initiated backup process
+* Borg configuration on backup client
+* Automatic pre- and post-backup script execution
+
 ## How it works (roughly...)
 
 1. Backup server starts Borg in "serve" mode

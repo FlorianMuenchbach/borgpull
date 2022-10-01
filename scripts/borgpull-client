@@ -158,18 +158,18 @@ exec_hook() {
     local hook="${1}"
     local name="${2}"
 
-    [ -x "${hook}" ] \
-        && { inf "Executing ${name} hook." \
+    if [ -x "${hook}" ]; then
+        inf "Executing ${name} hook." \
             && "${hook}" \
             && inf "Finished executing ${name} hook." \
             || { rv=$? \
                 && error "Failed executing the ${name} hook, stopping. Status: $rv" \
-                && return $rv; }; \
-            } \
-        || { \
-            [ ! -f "${hook}" ] \
+                && return $rv; }
+    else
+        [ ! -f "${hook}" ] \
             && inf "No ${name} hook configured." \
-            || { error "${name} hook (${hook}) configured but not executable." && exit 1; }; }
+            || { error "${name} hook (${hook}) configured but not executable." && exit 1; }
+    fi
 }
 
 

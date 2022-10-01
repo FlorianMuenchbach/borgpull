@@ -136,7 +136,7 @@ load_socket_path() {
 pre_backup_checks() {
     if [ -S "${SOCKET}" ]; then
         inf "Checked unix socket path '${SOCKET}', socket is usable."
-    elif [ ! -f "${SOCKEt}" ]; then
+    elif [ ! -f "${SOCKET}" ]; then
         error "Socket '${SOCKET}' does not exist!"
         exit 1
     else

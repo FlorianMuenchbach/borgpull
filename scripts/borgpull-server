@@ -14,15 +14,15 @@ log() {
 }
 
 error() {
-    log "ERROR  : ${@}" >&2
+    log "ERROR  : ${*}" >&2
 }
 
 inf() {
-    log "INFO   : ${@}"
+    log "INFO   : ${*}"
 }
 
 warn() {
-    log "WARNING: ${@}"
+    log "WARNING: ${*}"
 }
 
 usage() {
@@ -64,6 +64,8 @@ while [[ $1 == -* ]]; do
         *) error "Invalid options: $1"; usage ; exit 1 ;;
     esac
 done
+
+inf "Running as user ${USER} (${UID})"
 
 [ -f "${CONFIG}" ] \
     && source "${CONFIG}" \

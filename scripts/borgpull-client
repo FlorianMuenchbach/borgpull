@@ -1,5 +1,15 @@
 #!/bin/bash
 
+
+[[ "${0}" =~ bash$ && -n ${BASH_SOURCE[0]} ]] \
+     && __file="${BASH_SOURCE[0]}" \
+     || __file="${0}"
+
+SCRIPT_DIR="$( cd "$( dirname "${__file}" )" && pwd )"
+SCRIPT_NAME=$(basename "${__file}")
+unset __file
+
+
 CONFIG_BASE_DIR="${BORGPULL_CONFIG_DIR:-/etc/borgpull}"
 ARCHIVE_NAME='{hostname}-{now}'
 PRUNE_ARCHIVE_NAME_PATTERN='{hostname}-'
@@ -11,15 +21,15 @@ log() {
 }
 
 error() {
-    log "ERROR  : ${@}" >&2
+    log "ERROR  : ${*}" >&2
 }
 
 inf() {
-    log "INFO   : ${@}"
+    log "INFO   : ${*}"
 }
 
 warn() {
-    log "WARNING: ${@}"
+    log "WARNING: ${*}"
 }
 
 export -f log
@@ -83,7 +93,7 @@ EXTRA_OPTIONS_PRUNE=""
 
 
 
-inf "Running as user ${USER} (${UID})"
+inf "Running as user ${USER} (${UID}), config dir: ${CONFIG_BASE_DIR}"
 
 [ -f "${PATH_BORG_ENV}" ] \
     && inf "Found environment file, loading it..." \

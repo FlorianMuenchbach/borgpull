@@ -9,6 +9,11 @@ SCRIPT_DIR="$( cd "$( dirname "${__file}" )" && pwd )"
 SCRIPT_NAME=$(basename "${__file}")
 unset __file
 
+# Use the more fancy kill or fall back to the shell built in
+[ -f "/usr/bin/kill" ] \
+    && KILL_CMD="/usr/bin/kill --verbose --timeout 1000 TERM --timeout 1000 KILL" \
+    || KILL_CMD="kill"
+
 log() {
     echo "${@}"
 }
@@ -109,8 +114,7 @@ if [ "$mode" == "BACKUP" ]; then
     sudo -u ${LOCAL_USER} \
         ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" ${REMOTE_USER}@${REMOTE_HOST} \
         && inf "Remote backup complete." \
-        || { rv=$? && error "Remote backup failed with status ${rv}!."; }
-    # the socket will be cleaned up on success! kill ${SOCAT_PID} not needed!
+        || { rv=$? && error "Remote backup failed with status ${rv}." && ${KILL_CMD} ${SOCAT_PID}; }
     exit $rv
 elif [ "$mode" == "SERVE" ]; then
     inf "Starting SSH connection in 'SERVE' mode, hit Ctrl+C to cancel."

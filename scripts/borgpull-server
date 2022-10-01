@@ -111,15 +111,15 @@ mkdir -p -m 0700 "${RUN_DIR}" \
 if [ "$mode" == "BACKUP" ]; then
     inf "Trigger remote backup..."
     rv=0
-    sudo -u ${LOCAL_USER} \
-        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" ${REMOTE_USER}@${REMOTE_HOST} \
+    sudo -u "${LOCAL_USER}" \
+        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" "${REMOTE_USER}@${REMOTE_HOST}" \
         && inf "Remote backup complete." \
         || { rv=$? && error "Remote backup failed with status ${rv}." && ${KILL_CMD} ${SOCAT_PID}; }
     exit $rv
 elif [ "$mode" == "SERVE" ]; then
     inf "Starting SSH connection in 'SERVE' mode, hit Ctrl+C to cancel."
-    sudo -u ${LOCAL_USER} \
-        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" -N ${REMOTE_USER}@${REMOTE_HOST}
+    sudo -u "${LOCAL_USER}" \
+        ssh -R "${SOCKET_PATH}:${REMOTE_SOCKET_PATH}" -N "${REMOTE_USER}@${REMOTE_HOST}"
     warn "Remember to delete the remote socket file at '${REMOTE_SOCKET_PATH}'"
 else
     error "Unknown mode, try BACKUP or SERVE."
